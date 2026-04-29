@@ -1,0 +1,65 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.4.13/schema.json",
+  "files": {
+    "includes": [
+      "src/**/*.ts",
+      "src/*.ts",
+      "server.ts",
+      "!node_modules",
+      "!dist",
+      "!**/*.spec.ts",
+      "!**/*.test.ts"
+    ]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "trailingCommas": "es5",
+      "semicolons": "always",
+      "arrowParentheses": "always"
+    }
+  },
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "correctness": {
+        "noUnusedVariables": "error",
+        "noUnusedImports": "off",
+        "useImportExtensions": "off"
+      },
+      "suspicious": {
+        "noExplicitAny": "warn",
+        "noEmptyBlockStatements": "error",
+        "noVar": "error"
+      },
+      "style": {
+        "useConst": "error",
+        "useTemplate": "error",
+        "useShorthandAssign": "error",
+        "useDefaultParameterLast": "error",
+        "noParameterAssign": "error",
+        "useImportType": "error",
+        "useNodejsImportProtocol": "error",
+        "noUselessElse": "error"
+      },
+      "complexity": {
+        "useArrowFunction": "error",
+        "useLiteralKeys": "error"
+      }
+    }
+  }
+}
