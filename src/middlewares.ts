@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import { config } from "./config.js";
+import { BadRequestError } from "./customErrors.js";
 
 function middlewareLogResponses(req: Request, res: Response, next: NextFunction) {
   res.on("finish", () => {
@@ -16,4 +17,15 @@ function middlewareMetricsInc(_req: Request, _res: Response, next: NextFunction)
   next();
 }
 
-export { middlewareLogResponses, middlewareMetricsInc };
+function middlewareErrorHandling(err: Error, _req: Request, res: Response, _next: NextFunction) {
+  if (err instanceof BadRequestError) {
+    res.status(400).json({ error: err.message });
+  }
+
+  console.log(err);
+  res.status(500).json({
+    error: "Something went wrong on our end",
+  });
+}
+
+export { middlewareErrorHandling, middlewareLogResponses, middlewareMetricsInc };
