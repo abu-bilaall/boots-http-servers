@@ -1,11 +1,30 @@
 import { readFile } from "node:fs";
 import path from "node:path";
 import type { NextFunction, Request, Response } from "express";
+import {
+  checkPasswordHash,
+  getBearerToken,
+  hashPassword,
+  makeJWT,
+  makeRefreshToken,
+  validateJWT,
+} from "./auth/auth.js";
 import { config } from "./config.js";
-import { BadRequestError, ForbiddenError, NotFoundError } from "./customErrors.js";
+import {
+  BadRequestError,
+  ForbiddenError,
+  NotFoundError,
+  UnauthorizedError,
+} from "./customErrors.js";
 import { createChirp, getAllChirps, getChirp } from "./db/queries/chirps.js";
-import { createUser, deleteAllUsers } from "./db/queries/users.js";
-import type { NewChirp } from "./db/schema.js";
+import {
+  createRefreshToken,
+  getRefreshToken,
+  getUserIdFromRefreshToken,
+  revokeToken,
+} from "./db/queries/refreshTokens.js";
+import { createUser, deleteAllUsers, getUserWithEmail } from "./db/queries/users.js";
+import type { NewChirp, NewUser } from "./db/schema.js";
 
 function handlerReadiness(_req: Request, res: Response) {
   res.set("Content-Type", "text/plain");
@@ -39,7 +58,7 @@ function handlerReset(_req: Request, res: Response) {
   res.send(`Hits have been reset`);
 }
 
-type ChirpBodyPayload = { body: string; userId: string };
+type ChirpBodyPayload = { body: string };
 function cleanChirp(parsedBody: ChirpBodyPayload) {
   const profane = ["kerfuffle", "sharbert", "fornax"];
 
@@ -50,14 +69,17 @@ function cleanChirp(parsedBody: ChirpBodyPayload) {
   const regex = new RegExp(`\\b(${profane.join("|")})\\b`, "gi");
 
   const cleanedBody = parsedBody.body.replace(regex, "****");
-  return { body: cleanedBody, userId: parsedBody.userId };
+  return cleanedBody;
 }
 
 async function handlerCreateChirp(req: Request, res: Response, next: NextFunction) {
   try {
-    const payload: NewChirp = cleanChirp(req.body);
+    const jwt = getBearerToken(req);
+    const userId = validateJWT(jwt, config.api.secret);
+    const body = cleanChirp(req.body);
+    const payload: NewChirp = { body, userId };
     const newChirp = await createChirp(payload);
-    res.status(201).json(newChirp);
+    return res.status(201).json(newChirp);
   } catch (error) {
     next(error);
   }
@@ -66,7 +88,7 @@ async function handlerCreateChirp(req: Request, res: Response, next: NextFunctio
 async function handlerGetAllChirps(_req: Request, res: Response, next: NextFunction) {
   try {
     const chirps = await getAllChirps();
-    res.status(200).json(chirps);
+    return res.status(200).json(chirps);
   } catch (error) {
     next(error);
   }
@@ -76,22 +98,22 @@ async function handlerGetChirp(req: Request, res: Response, next: NextFunction) 
   try {
     const chirpDetails = await getChirp(req.params.chirpId as string);
     if (chirpDetails) {
-      res.status(200).json(chirpDetails);
-    } else {
-      throw new NotFoundError("Invalid ID. Chirp not found.");
+      return res.status(200).json(chirpDetails);
     }
+    throw new NotFoundError("Invalid ID. Chirp not found.");
   } catch (error) {
     next(error);
   }
 }
 
+type UserPayload = { email: string; password: string; expiresInSeconds?: number };
+type UserResponse = Omit<NewUser, "hashedPassword">;
 async function handlerUsers(req: Request, res: Response, next: NextFunction) {
-  type BodyPayload = { email: string };
-
   try {
-    const reqBody: BodyPayload = req.body;
-    const newUser = { email: reqBody.email };
-    const { email, id, ...newUserDetails } = await createUser(newUser);
+    const reqBody: UserPayload = req.body;
+    const passwordHash = await hashPassword(reqBody.password);
+    const newUser = { email: reqBody.email, hashedPassword: passwordHash };
+    const { email, id, ...newUserDetails }: UserResponse = await createUser(newUser);
     return res.status(201).json({ email, id, newUserDetails });
   } catch (error) {
     next(error);
@@ -102,7 +124,54 @@ async function handlerDeleteUsers(_req: Request, res: Response, next: NextFuncti
   try {
     if (config.api.platform !== "dev") throw new ForbiddenError("Environment is not 'dev.'");
     await deleteAllUsers();
-    res.status(200).json({ message: "all users deleted" });
+    return res.status(200).json({ message: "all users deleted" });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function handlerLoginUser(req: Request, res: Response, next: NextFunction) {
+  try {
+    const reqBody: UserPayload = req.body;
+    const user: NewUser = await getUserWithEmail(reqBody.email);
+    if (await checkPasswordHash(reqBody.password, user.hashedPassword as string)) {
+      const { email, id, ...userDetails }: UserResponse = user;
+      const exp = 3600;
+      const token = makeJWT(id as string, exp, config.api.secret);
+      const refreshToken = makeRefreshToken();
+      const days = parseInt(config.api.refreshTokenExpiry, 10); // "60d" -> 60
+      const refreshTokenExpiry = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+      await createRefreshToken(id as string, refreshToken, refreshTokenExpiry);
+      return res.status(200).json({ email, id, token, refreshToken, userDetails });
+    }
+    throw new UnauthorizedError("incorrect email or password");
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function handlerRefresh(req: Request, res: Response, next: NextFunction) {
+  try {
+    const refreshToken = getBearerToken(req);
+    const tokenDetails = await getRefreshToken(refreshToken);
+    const { userId } = await getUserIdFromRefreshToken(refreshToken);
+    if (tokenDetails && tokenDetails.revokedAt !== null) {
+      throw new UnauthorizedError("Refresh token has been revoked");
+    }
+
+    const exp = 3600;
+    const jwt = makeJWT(userId, exp, config.api.secret);
+    return res.status(200).json({ token: jwt });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function handlerRevoke(req: Request, res: Response, next: NextFunction) {
+  try {
+    const refreshToken = getBearerToken(req);
+    await revokeToken(refreshToken, new Date());
+    return res.status(204).end();
   } catch (error) {
     next(error);
   }
@@ -113,8 +182,11 @@ export {
   handlerDeleteUsers,
   handlerGetAllChirps,
   handlerGetChirp,
+  handlerLoginUser,
   handlerMetrics,
   handlerReadiness,
+  handlerRefresh,
   handlerReset,
+  handlerRevoke,
   handlerUsers,
 };
