@@ -12,11 +12,15 @@ function envOrThrow(key: string): string {
 
 const dbUrl = envOrThrow("DB_URL");
 const platform = envOrThrow("PLATFORM");
+const secret = envOrThrow("SECRET");
+const tokenExpiry = envOrThrow("TOKEN_EXPIRY");
 
 type APIConfig = {
   api: {
     fileserverHits: number;
     platform: string;
+    secret: string;
+    refreshTokenExpiry: string;
   };
 };
 
@@ -39,5 +43,7 @@ export const config: DBConfig & APIConfig = {
   api: {
     fileserverHits: 0,
     platform: platform,
+    secret,
+    refreshTokenExpiry: tokenExpiry,
   },
 };
