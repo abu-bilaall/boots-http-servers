@@ -10,9 +10,12 @@ import {
   handlerDeleteUsers,
   handlerGetAllChirps,
   handlerGetChirp,
+  handlerLoginUser,
   handlerMetrics,
   handlerReadiness,
+  handlerRefresh,
   handlerReset,
+  handlerRevoke,
   handlerUsers,
 } from "./handlers.js";
 
@@ -20,7 +23,6 @@ import {
   middlewareErrorHandling,
   middlewareLogResponses,
   middlewareMetricsInc,
-  middlewareValidateChirp,
 } from "./middlewares.js";
 
 process.loadEnvFile();
@@ -40,6 +42,9 @@ app.get("/api/chirps", handlerGetAllChirps);
 app.get("/api/chirps/:chirpId", handlerGetChirp);
 app.post("/api/chirps", handlerCreateChirp);
 app.post("/api/users", handlerUsers);
+app.post("/api/login", handlerLoginUser);
+app.post("/api/refresh", handlerRefresh);
+app.post("/api/revoke", handlerRevoke);
 
 app.use("/admin/metrics", handlerMetrics);
 app.post("/admin/reset", handlerDeleteUsers, handlerReset);
