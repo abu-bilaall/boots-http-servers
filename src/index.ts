@@ -7,6 +7,7 @@ import { config } from "./config.js";
 
 import {
   handlerCreateChirp,
+  handlerDeleteChirp,
   handlerDeleteUsers,
   handlerGetAllChirps,
   handlerGetChirp,
@@ -16,6 +17,7 @@ import {
   handlerRefresh,
   handlerReset,
   handlerRevoke,
+  handlerUpdateUsers,
   handlerUsers,
 } from "./handlers.js";
 
@@ -41,7 +43,9 @@ app.get("/api/healthz", handlerReadiness);
 app.get("/api/chirps", handlerGetAllChirps);
 app.get("/api/chirps/:chirpId", handlerGetChirp);
 app.post("/api/chirps", handlerCreateChirp);
+app.delete("/api/chirps/:chirpId", handlerDeleteChirp);
 app.post("/api/users", handlerUsers);
+app.put("/api/users", handlerUpdateUsers);
 app.post("/api/login", handlerLoginUser);
 app.post("/api/refresh", handlerRefresh);
 app.post("/api/revoke", handlerRevoke);
