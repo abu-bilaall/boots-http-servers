@@ -16,14 +16,14 @@ import {
   NotFoundError,
   UnauthorizedError,
 } from "./customErrors.js";
-import { createChirp, getAllChirps, getChirp } from "./db/queries/chirps.js";
+import { createChirp, deleteChirp, getAllChirps, getChirp } from "./db/queries/chirps.js";
 import {
   createRefreshToken,
   getRefreshToken,
   getUserIdFromRefreshToken,
   revokeToken,
 } from "./db/queries/refreshTokens.js";
-import { createUser, deleteAllUsers, getUserWithEmail } from "./db/queries/users.js";
+import { createUser, deleteAllUsers, getUserWithEmail, updateUser } from "./db/queries/users.js";
 import type { NewChirp, NewUser } from "./db/schema.js";
 
 function handlerReadiness(_req: Request, res: Response) {
@@ -106,7 +106,32 @@ async function handlerGetChirp(req: Request, res: Response, next: NextFunction) 
   }
 }
 
-type UserPayload = { email: string; password: string; expiresInSeconds?: number };
+async function handlerDeleteChirp(req: Request, res: Response, _next: NextFunction) {
+  try {
+    const userId = validateJWT(getBearerToken(req), config.api.secret);
+    const chirpId = req.params.chirpId as string;
+    const chirpDetails = await getChirp(chirpId);
+
+    if (!chirpDetails) {
+      return res.status(404).end();
+    }
+
+    if (chirpDetails.userId !== userId) {
+      throw new ForbiddenError("Forbidden Error");
+    }
+
+    await deleteChirp(chirpId);
+    return res.status(204).end();
+  } catch (error) {
+    if (error instanceof ForbiddenError) {
+      throw error;
+    }
+
+    throw new UnauthorizedError("Unauthorized");
+  }
+}
+
+type UserPayload = { email: string; password: string };
 type UserResponse = Omit<NewUser, "hashedPassword">;
 async function handlerUsers(req: Request, res: Response, next: NextFunction) {
   try {
@@ -114,7 +139,12 @@ async function handlerUsers(req: Request, res: Response, next: NextFunction) {
     const passwordHash = await hashPassword(reqBody.password);
     const newUser = { email: reqBody.email, hashedPassword: passwordHash };
     const { email, id, ...newUserDetails }: UserResponse = await createUser(newUser);
-    return res.status(201).json({ email, id, newUserDetails });
+    return res.status(201).json({
+      email,
+      id,
+      createdAt: newUserDetails.createdAt,
+      updatedAt: newUserDetails.updatedAt,
+    });
   } catch (error) {
     next(error);
   }
@@ -142,11 +172,34 @@ async function handlerLoginUser(req: Request, res: Response, next: NextFunction)
       const days = parseInt(config.api.refreshTokenExpiry, 10); // "60d" -> 60
       const refreshTokenExpiry = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
       await createRefreshToken(id as string, refreshToken, refreshTokenExpiry);
-      return res.status(200).json({ email, id, token, refreshToken, userDetails });
+      return res.status(200).json({
+        email,
+        id,
+        token,
+        refreshToken,
+        createdAt: userDetails.createdAt,
+        updatedAt: userDetails.updatedAt,
+      });
     }
     throw new UnauthorizedError("incorrect email or password");
   } catch (error) {
     next(error);
+  }
+}
+
+async function handlerUpdateUsers(req: Request, res: Response, _next: NextFunction) {
+  try {
+    const userId = validateJWT(getBearerToken(req), config.api.secret);
+    const { password, email }: UserPayload = req.body;
+    const passwordHash = await hashPassword(password);
+    const { id, createdAt, updatedAt }: UserResponse = await updateUser(
+      userId,
+      email,
+      passwordHash
+    );
+    return res.status(200).json({ id, email, createdAt, updatedAt });
+  } catch (_error) {
+    throw new UnauthorizedError("Unauthorized user");
   }
 }
 
@@ -179,6 +232,7 @@ async function handlerRevoke(req: Request, res: Response, next: NextFunction) {
 
 export {
   handlerCreateChirp,
+  handlerDeleteChirp,
   handlerDeleteUsers,
   handlerGetAllChirps,
   handlerGetChirp,
@@ -188,5 +242,6 @@ export {
   handlerRefresh,
   handlerReset,
   handlerRevoke,
+  handlerUpdateUsers,
   handlerUsers,
 };
