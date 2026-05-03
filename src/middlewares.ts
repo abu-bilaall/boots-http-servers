@@ -45,8 +45,4 @@ function middlewareErrorHandling(err: Error, _req: Request, res: Response, _next
   });
 }
 
-export {
-  middlewareErrorHandling,
-  middlewareLogResponses,
-  middlewareMetricsInc,
-};
+export { middlewareErrorHandling, middlewareLogResponses, middlewareMetricsInc };
