@@ -59,4 +59,26 @@ function makeRefreshToken() {
   return buf.toString("hex");
 }
 
-export { checkPasswordHash, getBearerToken, hashPassword, makeJWT, makeRefreshToken, validateJWT };
+function getAPIKey(req: Request) {
+  const authHeader = req.get("Authorization");
+
+  if (!authHeader) {
+    throw new UnauthorizedError("Authorization header missing");
+  }
+
+  if (!authHeader.startsWith("ApiKey ")) {
+    throw new UnauthorizedError("Invalid auth format");
+  }
+
+  return authHeader.slice(7); // remove ApiKey
+}
+
+export {
+  checkPasswordHash,
+  getAPIKey,
+  getBearerToken,
+  hashPassword,
+  makeJWT,
+  makeRefreshToken,
+  validateJWT,
+};
