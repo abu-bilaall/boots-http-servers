@@ -26,4 +26,13 @@ async function updateUser(userId: string, email: string, passwordHash: string) {
   return result;
 }
 
-export { createUser, deleteAllUsers, getUserWithEmail, updateUser };
+async function makeUserChirpyRed(userId: string) {
+  const [result] = await db
+    .update(users)
+    .set({ isChirpyRed: true })
+    .where(eq(users.id, userId))
+    .returning();
+  return result;
+}
+
+export { createUser, deleteAllUsers, getUserWithEmail, makeUserChirpyRed, updateUser };
