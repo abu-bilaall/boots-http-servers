@@ -14,6 +14,7 @@ const dbUrl = envOrThrow("DB_URL");
 const platform = envOrThrow("PLATFORM");
 const secret = envOrThrow("SECRET");
 const tokenExpiry = envOrThrow("TOKEN_EXPIRY");
+const polkaKey = envOrThrow("POLKA_KEY");
 
 type APIConfig = {
   api: {
@@ -21,6 +22,7 @@ type APIConfig = {
     platform: string;
     secret: string;
     refreshTokenExpiry: string;
+    polkaKey: string;
   };
 };
 
@@ -45,5 +47,6 @@ export const config: DBConfig & APIConfig = {
     platform: platform,
     secret,
     refreshTokenExpiry: tokenExpiry,
+    polkaKey,
   },
 };
