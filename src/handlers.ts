@@ -3,6 +3,7 @@ import path from "node:path";
 import type { NextFunction, Request, Response } from "express";
 import {
   checkPasswordHash,
+  getAPIKey,
   getBearerToken,
   hashPassword,
   makeJWT,
@@ -16,14 +17,26 @@ import {
   NotFoundError,
   UnauthorizedError,
 } from "./customErrors.js";
-import { createChirp, deleteChirp, getAllChirps, getChirp } from "./db/queries/chirps.js";
+import {
+  createChirp,
+  deleteChirp,
+  getAllChirps,
+  getChirp,
+  getChirpsWithUserId,
+} from "./db/queries/chirps.js";
 import {
   createRefreshToken,
   getRefreshToken,
   getUserIdFromRefreshToken,
   revokeToken,
 } from "./db/queries/refreshTokens.js";
-import { createUser, deleteAllUsers, getUserWithEmail, updateUser } from "./db/queries/users.js";
+import {
+  createUser,
+  deleteAllUsers,
+  getUserWithEmail,
+  makeUserChirpyRed,
+  updateUser,
+} from "./db/queries/users.js";
 import type { NewChirp, NewUser } from "./db/schema.js";
 
 function handlerReadiness(_req: Request, res: Response) {
@@ -85,8 +98,19 @@ async function handlerCreateChirp(req: Request, res: Response, next: NextFunctio
   }
 }
 
-async function handlerGetAllChirps(_req: Request, res: Response, next: NextFunction) {
+async function handlerGetAllChirps(req: Request, res: Response, next: NextFunction) {
   try {
+    const authorId = req.query.authorId;
+    if (typeof authorId === "string") {
+      const authorChirps = await getChirpsWithUserId(authorId);
+      return res.status(200).json(authorChirps);
+    }
+
+    const sortOrder = req.query.sort;
+    if (typeof sortOrder === "string" && sortOrder === "desc") {
+      const chirpsInDescOrder = await getAllChirps(true);
+      return res.status(200).json(chirpsInDescOrder);
+    }
     const chirps = await getAllChirps();
     return res.status(200).json(chirps);
   } catch (error) {
@@ -142,6 +166,7 @@ async function handlerUsers(req: Request, res: Response, next: NextFunction) {
     return res.status(201).json({
       email,
       id,
+      isChirpyRed: newUserDetails.isChirpyRed,
       createdAt: newUserDetails.createdAt,
       updatedAt: newUserDetails.updatedAt,
     });
@@ -177,6 +202,7 @@ async function handlerLoginUser(req: Request, res: Response, next: NextFunction)
         id,
         token,
         refreshToken,
+        isChirpyRed: userDetails.isChirpyRed,
         createdAt: userDetails.createdAt,
         updatedAt: userDetails.updatedAt,
       });
@@ -192,12 +218,12 @@ async function handlerUpdateUsers(req: Request, res: Response, _next: NextFuncti
     const userId = validateJWT(getBearerToken(req), config.api.secret);
     const { password, email }: UserPayload = req.body;
     const passwordHash = await hashPassword(password);
-    const { id, createdAt, updatedAt }: UserResponse = await updateUser(
+    const { id, createdAt, updatedAt, isChirpyRed }: UserResponse = await updateUser(
       userId,
       email,
       passwordHash
     );
-    return res.status(200).json({ id, email, createdAt, updatedAt });
+    return res.status(200).json({ id, email, isChirpyRed, createdAt, updatedAt });
   } catch (_error) {
     throw new UnauthorizedError("Unauthorized user");
   }
@@ -230,6 +256,31 @@ async function handlerRevoke(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+async function handlerPolkaWebhooks(req: Request, res: Response, next: NextFunction) {
+  try {
+    type PolkaHook = { event: string; data: { userId: string } };
+
+    const apiKey = getAPIKey(req);
+    if (apiKey !== config.api.polkaKey) {
+      throw new UnauthorizedError("Unauthorized API Key.");
+    }
+
+    const hook: PolkaHook = req.body;
+    if (hook.event !== "user.upgraded") {
+      return res.status(204).end();
+    }
+
+    const userDetails = await makeUserChirpyRed(hook.data.userId);
+    if (!userDetails) {
+      return res.status(404).end();
+    }
+
+    return res.status(204).end();
+  } catch (error) {
+    next(error);
+  }
+}
+
 export {
   handlerCreateChirp,
   handlerDeleteChirp,
@@ -238,6 +289,7 @@ export {
   handlerGetChirp,
   handlerLoginUser,
   handlerMetrics,
+  handlerPolkaWebhooks,
   handlerReadiness,
   handlerRefresh,
   handlerReset,
