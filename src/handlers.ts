@@ -12,8 +12,10 @@ import {
 } from "./auth/auth.js";
 import { config } from "./config.js";
 import {
+  AppError,
   BadRequestError,
   ForbiddenError,
+  InternalServerError,
   NotFoundError,
   UnauthorizedError,
 } from "./customErrors.js";
@@ -47,18 +49,14 @@ function handlerReadiness(_req: Request, res: Response) {
 
 function handlerMetrics(_req: Request, res: Response, next: NextFunction) {
   const filePath = path.join(process.cwd(), "src", "admin", "index.html");
-  try {
     readFile(filePath, "utf-8", (err, data) => {
-      if (err) return res.sendStatus(500);
+      if (err) return next(new InternalServerError(`Error reading ${filePath}`, err));
       res.set({
         "Content-Type": "text/html",
         charset: "utf-8",
       });
       res.send(data.replace("NUM", String(config.api.fileserverHits)));
     });
-  } catch (error) {
-    next(error);
-  }
 }
 
 function handlerReset(_req: Request, res: Response) {
@@ -94,7 +92,8 @@ async function handlerCreateChirp(req: Request, res: Response, next: NextFunctio
     const newChirp = await createChirp(payload);
     return res.status(201).json(newChirp);
   } catch (error) {
-    next(error);
+    if (error instanceof AppError) return next(error);
+    next(new InternalServerError(`Error creating new chirp, request body: ${req.body}`, error));
   }
 }
 
@@ -114,7 +113,7 @@ async function handlerGetAllChirps(req: Request, res: Response, next: NextFuncti
     const chirps = await getAllChirps();
     return res.status(200).json(chirps);
   } catch (error) {
-    next(error);
+    next(new InternalServerError("Error getting all chirps", error));
   }
 }
 
@@ -126,40 +125,49 @@ async function handlerGetChirp(req: Request, res: Response, next: NextFunction) 
     }
     throw new NotFoundError("Invalid ID. Chirp not found.");
   } catch (error) {
-    next(error);
+    if (error instanceof AppError) return next(error);
+    next(
+      new InternalServerError(
+        `Error getting chirp, chirp id: ${req.params.chirpId as string}`,
+        error
+      )
+    );
   }
 }
 
-async function handlerDeleteChirp(req: Request, res: Response, _next: NextFunction) {
+async function handlerDeleteChirp(req: Request, res: Response, next: NextFunction) {
   try {
     const userId = validateJWT(getBearerToken(req), config.api.secret);
     const chirpId = req.params.chirpId as string;
     const chirpDetails = await getChirp(chirpId);
 
     if (!chirpDetails) {
-      return res.status(404).end();
+      throw new NotFoundError("Chirp not found.");
     }
 
     if (chirpDetails.userId !== userId) {
-      throw new ForbiddenError("Forbidden Error");
+      throw new ForbiddenError("Forbidden Error. Chirp isn't yours.");
     }
 
     await deleteChirp(chirpId);
     return res.status(204).end();
   } catch (error) {
-    if (error instanceof ForbiddenError) {
-      throw error;
-    }
+    if (error instanceof AppError) return next(error);
 
-    throw new UnauthorizedError("Unauthorized");
+    next(
+      new InternalServerError(
+        `Error deleting chirp, chirp id: ${req.params.chirpId as string}`,
+        error
+      )
+    );
   }
 }
 
 type UserPayload = { email: string; password: string };
 type UserResponse = Omit<NewUser, "hashedPassword">;
 async function handlerUsers(req: Request, res: Response, next: NextFunction) {
+  const reqBody: UserPayload = req.body;
   try {
-    const reqBody: UserPayload = req.body;
     const passwordHash = await hashPassword(reqBody.password);
     const newUser = { email: reqBody.email, hashedPassword: passwordHash };
     const { email, id, ...newUserDetails }: UserResponse = await createUser(newUser);
@@ -171,7 +179,7 @@ async function handlerUsers(req: Request, res: Response, next: NextFunction) {
       updatedAt: newUserDetails.updatedAt,
     });
   } catch (error) {
-    next(error);
+    next(new InternalServerError(`Error creating user: ${reqBody.email}`, error));
   }
 }
 
@@ -181,7 +189,8 @@ async function handlerDeleteUsers(_req: Request, res: Response, next: NextFuncti
     await deleteAllUsers();
     return res.status(200).json({ message: "all users deleted" });
   } catch (error) {
-    next(error);
+    if (error instanceof AppError) return next(error);
+    next(new InternalServerError("Error deleting all users", error));
   }
 }
 
@@ -189,6 +198,9 @@ async function handlerLoginUser(req: Request, res: Response, next: NextFunction)
   try {
     const reqBody: UserPayload = req.body;
     const user: NewUser = await getUserWithEmail(reqBody.email);
+    
+    if (!user) throw new UnauthorizedError("Incorrect email or password");
+
     if (await checkPasswordHash(reqBody.password, user.hashedPassword as string)) {
       const { email, id, ...userDetails }: UserResponse = user;
       const exp = 3600;
@@ -207,13 +219,14 @@ async function handlerLoginUser(req: Request, res: Response, next: NextFunction)
         updatedAt: userDetails.updatedAt,
       });
     }
-    throw new UnauthorizedError("incorrect email or password");
+    throw new UnauthorizedError("Incorrect email or password");
   } catch (error) {
-    next(error);
+    if (error instanceof AppError) return next(error);
+    next(new InternalServerError(`Error logging user in: ${req.body.email}`, error));
   }
 }
 
-async function handlerUpdateUsers(req: Request, res: Response, _next: NextFunction) {
+async function handlerUpdateUsers(req: Request, res: Response, next: NextFunction) {
   try {
     const userId = validateJWT(getBearerToken(req), config.api.secret);
     const { password, email }: UserPayload = req.body;
@@ -224,8 +237,9 @@ async function handlerUpdateUsers(req: Request, res: Response, _next: NextFuncti
       passwordHash
     );
     return res.status(200).json({ id, email, isChirpyRed, createdAt, updatedAt });
-  } catch (_error) {
-    throw new UnauthorizedError("Unauthorized user");
+  } catch (error) {
+    if (error instanceof AppError) return next(error);
+    next(new InternalServerError(`Error updating user: ${req.body.email}`, error));
   }
 }
 
@@ -233,16 +247,17 @@ async function handlerRefresh(req: Request, res: Response, next: NextFunction) {
   try {
     const refreshToken = getBearerToken(req);
     const tokenDetails = await getRefreshToken(refreshToken);
-    const { userId } = await getUserIdFromRefreshToken(refreshToken);
-    if (tokenDetails && tokenDetails.revokedAt !== null) {
-      throw new UnauthorizedError("Refresh token has been revoked");
-    }
+
+    if (!tokenDetails) throw new UnauthorizedError("Refresh token not found");
+    if (tokenDetails.revokedAt !== null) throw new UnauthorizedError("Refresh token has been revoked");
+    if (tokenDetails.expiresAt < new Date()) throw new UnauthorizedError("Refresh token has expired");
 
     const exp = 3600;
-    const jwt = makeJWT(userId, exp, config.api.secret);
+    const jwt = makeJWT(tokenDetails.userId, exp, config.api.secret);
     return res.status(200).json({ token: jwt });
   } catch (error) {
-    next(error);
+    if (error instanceof AppError) return next(error);
+    next(new InternalServerError("Error refreshing JWT", error));
   }
 }
 
@@ -252,7 +267,8 @@ async function handlerRevoke(req: Request, res: Response, next: NextFunction) {
     await revokeToken(refreshToken, new Date());
     return res.status(204).end();
   } catch (error) {
-    next(error);
+    if (error instanceof AppError) return next(error);
+    next(new InternalServerError("Error revoking refresh token", error));
   }
 }
 
@@ -272,12 +288,13 @@ async function handlerPolkaWebhooks(req: Request, res: Response, next: NextFunct
 
     const userDetails = await makeUserChirpyRed(hook.data.userId);
     if (!userDetails) {
-      return res.status(404).end();
+      throw new NotFoundError("user not found");
     }
 
     return res.status(204).end();
   } catch (error) {
-    next(error);
+    if (error instanceof AppError) return next(error);
+    next(new InternalServerError("Error upgrading user to a Chirpy Red member", error));
   }
 }
 
