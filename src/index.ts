@@ -28,7 +28,6 @@ import {
   middlewareMetricsInc,
 } from "./middlewares.js";
 
-process.loadEnvFile();
 const migrationClient = postgres(config.db.url, { max: 1 });
 await migrate(drizzle(migrationClient), config.db.migrationConfig);
 
