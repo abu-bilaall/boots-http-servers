@@ -1,11 +1,42 @@
 import type { NextFunction, Request, Response } from "express";
 import { config } from "./config.js";
-import {
-  BadRequestError,
-  ForbiddenError,
-  NotFoundError,
-  UnauthorizedError,
-} from "./customErrors.js";
+import { AppError, InternalServerError } from "./customErrors.js";
+
+type SerializedError = {
+  name: string;
+  message: string;
+  statusCode?: number;
+  isOperational?: boolean;
+  cause?: unknown;
+  stack?: string;
+};
+
+function serializeError(err: unknown): SerializedError {
+  if (err instanceof InternalServerError) {
+    return {
+      name: err.name,
+      message: err.message,
+      statusCode: err.statusCode,
+      isOperational: err.isOperational,
+      cause: err.cause,
+      stack: err.stack,
+    };
+  }
+
+  if (err instanceof Error) {
+    return {
+      name: err.name,
+      message: err.message,
+      cause: err.cause,
+      stack: err.stack,
+    };
+  }
+
+  return {
+    name: "UnknownError",
+    message: String(err),
+  };
+}
 
 function middlewareLogResponses(req: Request, res: Response, next: NextFunction) {
   res.on("finish", () => {
@@ -23,24 +54,16 @@ function middlewareMetricsInc(_req: Request, _res: Response, next: NextFunction)
 }
 
 function middlewareErrorHandling(err: Error, _req: Request, res: Response, _next: NextFunction) {
-  if (err instanceof BadRequestError) {
-    return res.status(400).json({ error: err.message });
+  if (err instanceof AppError && err.isOperational) {
+    return res.status(err.statusCode).json({
+      success: false,
+      error: { name: err.name, message: err.message, statusCode: err.statusCode },
+    });
   }
 
-  if (err instanceof UnauthorizedError) {
-    return res.status(401).json({ error: err.message });
-  }
-
-  if (err instanceof ForbiddenError) {
-    return res.status(403).json({ error: err.message });
-  }
-
-  if (err instanceof NotFoundError) {
-    return res.status(404).json({ error: err.message });
-  }
-
-  console.log(err);
+  console.error(serializeError(err));
   return res.status(500).json({
+    success: false,
     error: "Something went wrong on our end",
   });
 }
