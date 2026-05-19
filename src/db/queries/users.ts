@@ -1,9 +1,11 @@
 import { eq } from "drizzle-orm";
 import { db } from "../index.js";
 import { type NewUser, users } from "../schema.js";
+import { ConflictError } from "../../customErrors.js";
 
 async function createUser(user: NewUser) {
   const [result] = await db.insert(users).values(user).onConflictDoNothing().returning();
+  if (!result) throw new ConflictError("Email already in use");
   return result;
 }
 
